@@ -1,5 +1,3 @@
-# TweetSense
-
 <p align="center">
   <img src="https://github.com/namuan/tweetsense/raw/main/images/logo.png" width="128px"/>
 </p>
