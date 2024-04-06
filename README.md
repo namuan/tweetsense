@@ -5,7 +5,7 @@
 
 ![](images/screenshot.png)
 
-## Development
+## Setup
 
 Setup Python environment.
 

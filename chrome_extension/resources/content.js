@@ -1,6 +1,4 @@
-const {LRUCache} = require('lru-cache');
-
-const enableLog = false;
+const enableLog = true;
 
 function console_log(message) {
     if (enableLog) {
@@ -20,16 +18,12 @@ function getOptionValue(option_name) {
 }
 
 // Function to decide whether to hide a tweet
-async function shouldHideTweet(llm_config, tweet_text) {
-    if (tweet_cache.has(tweet_text)) {
-        console_log(`Found tweet in cache: ${tweet_text}`)
-        return tweet_cache.get(tweet_text);
-    }
-
-    const tweetPromise = await (async () => {
+async function shouldHideTweet(llm_config, tweet_text, tweet_author) {
+    return await (async () => {
         try {
             const request = {
-                "tweet_text": tweet_text
+                "tweet_text": tweet_text,
+                "tweet_author": tweet_author
             }
 
             const response = await fetch(llm_config.api_url, {
@@ -43,14 +37,7 @@ async function shouldHideTweet(llm_config, tweet_text) {
 
             if (response.ok) {
                 const data = await response.json();
-                const score = data.score
-                const sentiment = data.sentiment
-                const vader_score = data.vader_score
-                const result = score < llm_config.hide_threshold && vader_score < 0.5;
-                if (result) {
-                    console_log(`Hiding tweet: ${tweet_text}, result: ${result}, score: ${sentiment}, sentiment: ${sentiment}, vader_score: ${vader_score}`);
-                }
-                return result;
+                return data.hide_from_view
             } else {
                 return false;
             }
@@ -59,27 +46,32 @@ async function shouldHideTweet(llm_config, tweet_text) {
             return false;
         }
     })();
-
-    tweet_cache.set(tweet_text, tweetPromise);
-    return tweetPromise;
 }
 
 // Function to process and hide tweets
 async function processTweets(llm_config) {
+    const parentTweetSelector = 'article[data-testid="tweet"]'
     const tweetSelector = 'div[data-testid="tweetText"]';
-    for (const tweet of document.querySelectorAll(tweetSelector)) {
-        const tweet_text = tweet.textContent;
-        if (await shouldHideTweet(llm_config, tweet_text)) {
-            const article = tweet.closest('article');
-            if (article) {
-                greyOutElement(article)
+    const tweetUserSelector = 'div[data-testid="User-Name"]'
+    for (const parentTweet of document.querySelectorAll(parentTweetSelector)) {
+        const parentTweetStyle = window.getComputedStyle(parentTweet);
+        if (parentTweetStyle.display !== 'none') {
+            const tweet_text = parentTweet.querySelector(tweetSelector) ? parentTweet.querySelector(tweetSelector).textContent : "";
+            const tweet_author = parentTweet.querySelector(tweetUserSelector) ? parentTweet.querySelector(tweetUserSelector).textContent : "";
+
+            if (await shouldHideTweet(llm_config, tweet_text, tweet_author)) {
+                if (parentTweet) {
+                    console_log(`🙈 Hiding ${tweet_text}`)
+                    greyOutElement(parentTweet)
+                }
             }
         }
     }
 }
 
 function greyOutElement(element) {
-    element.style.opacity = '0.2'; // Set opacity to 50%
+    // element.style.opacity = '0.1';
+    element.style.display = 'none';
     element.style.pointerEvents = 'none'; // Disable pointer events (clicks, hover, etc.)
 }
 
@@ -88,13 +80,8 @@ async function initializeClient() {
         const api_url = await getOptionValue('apiUrl');
         console_log('Using API URL:', api_url);
 
-        const hide_threshold_str = await getOptionValue('hide_threshold');
-        const hide_threshold = parseFloat(hide_threshold_str);
-        console_log('Using hide threshold:', hide_threshold);
-
         return {
-            api_url: api_url,
-            hide_threshold: hide_threshold
+            api_url: api_url
         };
     } catch (error) {
         console.error('Error:', error);
@@ -102,30 +89,11 @@ async function initializeClient() {
     }
 }
 
-const lru_options = {
-    max: 500,
-}
-
-const tweet_cache = new LRUCache(lru_options); // Initialize the cache
-console_log("Cache size:", tweet_cache.size);
-
 // Initialize the client and then set up the observer
 initializeClient().then(llm_config => {
-    // // Hide distractions
-    // aria_labels = [
-    //     "Subscribe to Premium",
-    //     "Timeline: Trending now",
-    //     "Who to follow",
-    //     "Footer"
-    // ]
-    //
-    // for (const aria_label in aria_labels) {
-    //     const aria_element = document.querySelector('[aria-label="' + aria_labels[aria_label] + '"]');
-    //     aria_element.parentElement.style.display = 'none';
-    // }
     // Call processTweets initially to hide existing tweets
     processTweets(llm_config).then(() => {
-        console.log('Done hiding existing tweets');
+        console_log('Done hiding existing tweets');
     });
     // Use MutationObserver to watch for changes in the DOM
     const observer = new MutationObserver(mutations => {

@@ -1,43 +1,64 @@
+from functools import cache
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from transformers import pipeline
-from vaderSentiment import vaderSentiment
+
+import logging
+
+logging.basicConfig(filename='tweet-sentiment.log', level=logging.INFO)
 
 app = Flask(__name__)
 CORS(app)
 
 # Load the pre-trained sentiment analysis pipeline
 sentiment_pipeline = pipeline(
-    "text-classification", model="distilbert-base-uncased-finetuned-sst-2-english"
+    "zero-shot-classification", model="MoritzLaurer/deberta-v3-base-zeroshot-v1.1-all-33"
 )
-sentiment_analyser = vaderSentiment.SentimentIntensityAnalyzer()
+
+hypothesis_template = "This text is about {}"
+classes_verbalized = ["code", "software-development", "machine-learning", "trading", "python"]
+
+allowed_accounts = ["@betterhn50"]
+
+
+def is_in_allowed_accounts(tweet_author):
+    for account in allowed_accounts:
+        if account in tweet_author:
+            return True
+
+    return False
 
 
 @app.route("/classify", methods=["POST"])
 def analyze_sentiment():
+    tweet_author = request.json.get("tweet_author")
+
+    if (is_in_allowed_accounts(tweet_author)):
+        return jsonify({"hide_from_view": False})
+
     tweet_text = request.json.get("tweet_text")
     if not tweet_text:
-        return jsonify({"error": "Tweet text is required"}), 400
+        return jsonify({"hide_from_view": True})
 
-    bert_sentiment = sentiment_pipeline(tweet_text)
-    bert_sentiment_label = bert_sentiment[0]["label"]
-    bert_sentiment_score = round(bert_sentiment[0]["score"], 2)
-
-    vader_sentiment = sentiment_analyser.polarity_scores(tweet_text)
-    vader_sentiment_score = vader_sentiment.get("compound")
-
-    if bert_sentiment_score < 0.6 and vader_sentiment_score < 0.5:
-        print(f"⛔ 🐦 {tweet_text}")
-        print(f">> ⚡ {bert_sentiment_label} - {bert_sentiment_score}")
-        print(f">> ⚡ {vader_sentiment_score}")
+    categories_found = match_categories(tweet_text)
+    app.logger.info(f"🤔 {tweet_author}: {tweet_text} -> {categories_found}")
 
     return jsonify(
         {
-            "sentiment": bert_sentiment_label,
-            "score": bert_sentiment_score,
-            "vader_score": vader_sentiment_score,
+            "hide_from_view": False if categories_found else True
         }
     )
+
+
+@cache
+def match_categories(tweet_text):
+    sentiment = sentiment_pipeline(tweet_text,
+                                   classes_verbalized,
+                                   hypothesis_template=hypothesis_template,
+                                   multi_label=True)
+    app.logger.info(sentiment)
+    return any([x for x in sentiment["scores"] if x > 0.75])
 
 
 if __name__ == "__main__":
